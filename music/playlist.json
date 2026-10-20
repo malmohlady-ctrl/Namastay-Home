@@ -1,0 +1,101 @@
+{
+  "app": "Namastay Home",
+  "tracks": [
+    {
+      "file": "01-gymnopedie-no-1.mp3",
+      "title": "Gymnopedie No 1",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Gymnopedie%20No%201.mp3",
+      "license": "CC BY 4.0",
+      "duration": 187
+    },
+    {
+      "file": "02-meditation-impromptu-01.mp3",
+      "title": "Meditation Impromptu 01",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Meditation%20Impromptu%2001.mp3",
+      "license": "CC BY 4.0",
+      "duration": 213
+    },
+    {
+      "file": "03-colorless-aura.mp3",
+      "title": "Colorless Aura",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Colorless%20Aura.mp3",
+      "license": "CC BY 4.0",
+      "duration": 158
+    },
+    {
+      "file": "04-atlantean-twilight.mp3",
+      "title": "Atlantean Twilight",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Atlantean%20Twilight.mp3",
+      "license": "CC BY 4.0",
+      "duration": 171
+    },
+    {
+      "file": "05-enchanted-journey.mp3",
+      "title": "Enchanted Journey",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Enchanted%20Journey.mp3",
+      "license": "CC BY 4.0",
+      "duration": 270
+    },
+    {
+      "file": "06-immersed.mp3",
+      "title": "Immersed",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Immersed.mp3",
+      "license": "CC BY 4.0",
+      "duration": 249
+    },
+    {
+      "file": "07-meditation-impromptu-02.mp3",
+      "title": "Meditation Impromptu 02",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Meditation%20Impromptu%2002.mp3",
+      "license": "CC BY 4.0",
+      "duration": 249
+    },
+    {
+      "file": "08-gymnopedie-no-2.mp3",
+      "title": "Gymnopedie No 2",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Gymnopedie%20No%202.mp3",
+      "license": "CC BY 4.0",
+      "duration": 159
+    },
+    {
+      "file": "09-inspired.mp3",
+      "title": "Inspired",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Inspired.mp3",
+      "license": "CC BY 4.0",
+      "duration": 286
+    },
+    {
+      "file": "10-winter-chimes.mp3",
+      "title": "Winter Chimes",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Winter%20Chimes.mp3",
+      "license": "CC BY 4.0",
+      "duration": 158
+    },
+    {
+      "file": "11-meditation-impromptu-03.mp3",
+      "title": "Meditation Impromptu 03",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Meditation%20Impromptu%2003.mp3",
+      "license": "CC BY 4.0",
+      "duration": 255
+    },
+    {
+      "file": "12-healing.mp3",
+      "title": "Healing",
+      "artist": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Healing.mp3",
+      "license": "CC BY 4.0",
+      "duration": 520
+    }
+  ]
+}
