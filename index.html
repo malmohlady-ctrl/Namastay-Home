@@ -425,7 +425,7 @@ function loadVoiceOptions(){
 }
 try{loadVoiceOptions();speechSynthesis.onvoiceschanged=loadVoiceOptions;}catch(e){}
 $("voiceSel").addEventListener("change",e=>{prefs.voiceURI=e.target.value||"";savePrefs();});
-fillRoutinePicker();loadRoutine();renderRoutines();renderProgress();renderVoice();if(window.AppMusic)AppMusic.init({mount:"musicMount",storageKey:"appmusic.namastay",appName:"Namastay Home"});
+fillRoutinePicker();loadRoutine();renderRoutines();renderProgress();renderVoice();if(window.AppMusic)AppMusic.init({mount:"musicMount",storageKey:"appmusic.namastay",appName:"Namastay Home",clientId:"188c20de412f4790af0fbff481d5904a",playlistId:"1jltX5L6gM6SKfYAuE2sLx"});
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&running&&!paused){tick();if(running)keepAwake(true)}});
 if("serviceWorker"in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}))}
 </script>
