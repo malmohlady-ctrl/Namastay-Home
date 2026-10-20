@@ -1,78 +1,25 @@
-/* AppMusic — self-contained offline music player (vanilla JS, no deps).
-   One copy lives in each app. Loads music/playlist.json, plays local MP3s.
+/* AppMusic — Spotify remote-control player (vanilla JS, no deps).
+   Same shell as the offline player, but playback happens in the user's
+   Spotify app via the Web API (no SDK, no in-app streaming).
+   One-time PKCE authorization stores a refresh token in localStorage;
+   after that the player connects silently — no Connect button.
    API:
-     AppMusic.init({ mount: "musicMount", storageKey: "appmusic.<app>", appName: "My App" })
-     AppMusic.duck()    — lower music while a voice cue plays (nestable)
-     AppMusic.unduck()  — restore after the cue
-     AppMusic.pause()   — pause music (used by apps if needed)
-   Persistence (per storageKey): track index, position, volume, shuffle,
-   repeat, collapsed. Playback starts only after a user tap.
+     AppMusic.init({ mount, storageKey, appName, clientId, playlistId })
+     AppMusic.duck()/unduck() — no-ops (kept so app cue code stays valid)
+     AppMusic.pause(), AppMusic.isPlaying()
 */
 (function () {
   "use strict";
+  var API = "https://api.spotify.com/v1";
+  var SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing";
   var state = {
-    tracks: [], index: 0, playing: false, shuffle: false,
-    repeat: "all", volume: 0.9, duckCount: 0, missing: {},
-    seeking: false, saveTimer: 0, started: false,
-    userTracks: [], blobs: {}, objUrl: null
+    tracks: [], tokens: null, deviceId: null, isPlaying: false,
+    currentUri: null, progressMs: 0, anchorAt: 0, durationMs: 0,
+    shuffle: false, repeat: "off", volume: 90, collapsed: false,
+    seeking: false, setup: false, pollTimer: 0, tickTimer: 0, volDead: false
   };
-  var els = {}, audio = null, opts = {}, base = "music/";
-
-  /* User-imported files live in IndexedDB so they survive offline. */
-  function keyOf(t) { return t.blobId ? "blob:" + t.blobId : t.file; }
-  function idb() {
-    return new Promise(function (res, rej) {
-      var r = indexedDB.open("appmusic-files-v1", 1);
-      r.onupgradeneeded = function () { r.result.createObjectStore("files"); };
-      r.onsuccess = function () { res(r.result); };
-      r.onerror = function () { rej(r.error); };
-    });
-  }
-  function idbAll() {
-    return idb().then(function (db) {
-      return new Promise(function (res, rej) {
-        var out = {}, tx = db.transaction("files").objectStore("files").openCursor();
-        tx.onsuccess = function () {
-          var c = tx.result;
-          if (c) { out[c.key] = c.value; c.continue(); } else res(out);
-        };
-        tx.onerror = function () { rej(tx.error); };
-      });
-    }).catch(function () { return {}; });
-  }
-  function idbPut(id, blob) {
-    return idb().then(function (db) {
-      return new Promise(function (res, rej) {
-        var tx = db.transaction("files", "readwrite");
-        tx.objectStore("files").put(blob, id);
-        tx.oncomplete = res; tx.onerror = function () { rej(tx.error); };
-      });
-    });
-  }
-  function idbDel(id) {
-    return idb().then(function (db) {
-      return new Promise(function (res) {
-        var tx = db.transaction("files", "readwrite");
-        tx.objectStore("files").delete(id);
-        tx.oncomplete = res; tx.onerror = res;
-      });
-    }).catch(function () {});
-  }
-  function saveUserMeta() {
-    try {
-      localStorage.setItem(opts.storageKey + ".usertracks",
-        JSON.stringify(state.userTracks.map(function (t) {
-          return { blobId: t.blobId, title: t.title, artist: t.artist, duration: t.duration };
-        })));
-    } catch (e) {}
-  }
-  function loadUserMeta() {
-    try {
-      state.userTracks = JSON.parse(localStorage.getItem(opts.storageKey + ".usertracks") || "[]")
-        .filter(function (t) { return t && t.blobId; })
-        .map(function (t) { t.user = true; return t; });
-    } catch (e) { state.userTracks = []; }
-  }
+  var els = {}, opts = {};
+  var TK = ""; // localStorage key for tokens
 
   function $(cls) { return els.root.querySelector("." + cls); }
   function fmt(s) {
@@ -80,170 +27,191 @@
     s = Math.round(s);
     return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2);
   }
-  function save() {
-    try {
-      localStorage.setItem(opts.storageKey, JSON.stringify({
-        index: state.index,
-        position: audio ? audio.currentTime || 0 : 0,
-        volume: state.volume, shuffle: state.shuffle,
-        repeat: state.repeat, collapsed: state.collapsed
-      }));
-    } catch (e) {}
+  function status(msg) {
+    var el = $("amp-status");
+    if (el) { el.textContent = msg || ""; el.style.display = msg ? "block" : "none"; }
   }
-  function loadPrefs() {
-    try {
-      var p = JSON.parse(localStorage.getItem(opts.storageKey) || "null");
-      if (p) {
-        state.index = p.index || 0;
-        state.volume = typeof p.volume === "number" ? p.volume : 0.9;
-        state.shuffle = !!p.shuffle;
-        state.repeat = p.repeat || "all";
-        state.collapsed = !!p.collapsed;
-        state.savedPosition = p.position || 0;
-      }
-    } catch (e) {}
-  }
-  function applyVolume() {
-    if (!audio) return;
-    var duck = state.duckCount > 0 ? 0.25 : 1;
-    audio.volume = Math.max(0, Math.min(1, state.volume * duck));
-  }
+  function redirectUri() { return location.origin + location.pathname; }
 
-  function renderList() {
-    var ol = $("amp-list");
-    ol.innerHTML = "";
-    state.tracks.forEach(function (t, i) {
-      var li = document.createElement("li");
-      li.className = "amp-track" + (i === state.index ? " current" : "") +
-        (state.missing[keyOf(t)] ? " missing" : "");
-      var name = document.createElement("span");
-      name.className = "amp-track-name";
-      name.textContent = t.title + (state.missing[keyOf(t)] ? " (file missing)" : "");
-      var dur = document.createElement("span");
-      dur.className = "amp-track-dur";
-      dur.textContent = t.duration ? fmt(t.duration) : "";
-      li.appendChild(name);
-      if (t.user) {
-        var rm = document.createElement("button");
-        rm.className = "amp-remove"; rm.textContent = "✕"; rm.title = "Remove song";
-        rm.addEventListener("click", function (e) {
-          e.stopPropagation(); removeUserTrack(t.blobId);
-        });
-        li.appendChild(rm);
-      }
-      li.appendChild(dur);
-      li.addEventListener("click", function () {
-        if (state.missing[keyOf(t)]) return;
-        loadTrack(i, true);
-      });
-      ol.appendChild(li);
+  /* ---------- tokens ---------- */
+  function saveTokens(t) {
+    state.tokens = t;
+    try { localStorage.setItem(TK, JSON.stringify(t)); } catch (e) {}
+  }
+  function loadTokens() {
+    try { state.tokens = JSON.parse(localStorage.getItem(TK) || "null"); } catch (e) { state.tokens = null; }
+    return state.tokens;
+  }
+  function clearTokens() {
+    state.tokens = null;
+    try { localStorage.removeItem(TK); } catch (e) {}
+  }
+  function tokenPost(body) {
+    return fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(body).toString()
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+  }
+  function storeAuth(j) {
+    saveTokens({
+      access: j.access_token,
+      refresh: j.refresh_token || (state.tokens && state.tokens.refresh),
+      expires: Date.now() + (j.expires_in || 3600) * 1000
     });
   }
-  function renderMeta() {
-    var t = state.tracks[state.index];
-    $("amp-title").textContent = t ? t.title : "No music";
-    $("amp-artist").textContent = t ? (t.artist || "") : "";
-    if ("mediaSession" in navigator && t) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: t.title, artist: t.artist || "", album: opts.appName || ""
-        });
-      } catch (e) {}
+  function refresh() {
+    if (!state.tokens || !state.tokens.refresh) return Promise.reject(new Error("no refresh"));
+    return tokenPost({
+      grant_type: "refresh_token", refresh_token: state.tokens.refresh,
+      client_id: opts.clientId
+    }).then(function (res) {
+      if (!res.ok) throw new Error("refresh failed");
+      storeAuth(res.j);
+      return state.tokens.access;
+    });
+  }
+  function accessToken() {
+    if (state.tokens && state.tokens.access && Date.now() < state.tokens.expires - 30000) {
+      return Promise.resolve(state.tokens.access);
     }
-    renderList();
+    return refresh();
   }
-  function loadTrack(i, autoplay) {
-    if (!state.tracks.length) return;
-    state.index = (i + state.tracks.length) % state.tracks.length;
-    var t = state.tracks[state.index];
-    if (state.objUrl) { URL.revokeObjectURL(state.objUrl); state.objUrl = null; }
-    if (t.blobId) {
-      var blob = state.blobs[t.blobId];
-      if (!blob) { state.missing[keyOf(t)] = true; renderMeta(); if (autoplay) next(false); return; }
-      state.objUrl = URL.createObjectURL(blob);
-      audio.src = state.objUrl;
-    } else {
-      audio.src = base + t.file;
-    }
-    renderMeta();
-    if (autoplay) play();
-    save();
-  }
-  function removeUserTrack(blobId) {
-    var wasCurrent = state.tracks[state.index] && state.tracks[state.index].blobId === blobId;
-    delete state.blobs[blobId];
-    state.userTracks = state.userTracks.filter(function (t) { return t.blobId !== blobId; });
-    state.tracks = state.tracks.filter(function (t) { return t.blobId !== blobId; });
-    saveUserMeta(); idbDel(blobId);
-    if (state.index >= state.tracks.length) state.index = Math.max(0, state.tracks.length - 1);
-    if (wasCurrent) { pause(); if (state.tracks.length) loadTrack(state.index, false); }
-    renderList(); save();
-  }
-  function importFiles(fileList) {
-    var files = Array.prototype.slice.call(fileList || []);
-    if (!files.length) return;
-    var pending = files.length;
-    files.forEach(function (f) {
-      if (!/audio|\.mp3$|\.m4a$|\.ogg$|\.wav$/i.test(f.type + " " + f.name)) { if (--pending === 0) renderList(); return; }
-      var id = "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      var clean = f.name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").trim();
-      var title = clean || "Untitled", artist = "Your music";
-      var parts = clean.split(" - ");
-      if (parts.length > 1) { artist = parts[0].trim(); title = parts.slice(1).join(" - ").trim(); }
-      idbPut(id, f).then(function () {
-        state.blobs[id] = f;
-        var meta = { blobId: id, title: title, artist: artist, duration: 0, user: true };
-        var probe = new Audio();
-        probe.preload = "metadata";
-        probe.onloadedmetadata = function () {
-          meta.duration = Math.round(probe.duration) || 0;
-          URL.revokeObjectURL(probe.src);
-          finish();
-        };
-        probe.onerror = finish;
-        probe.src = URL.createObjectURL(f);
-        function finish() {
-          state.userTracks.push(meta);
-          state.tracks.push(meta);
-          saveUserMeta();
-          if (--pending === 0) { renderList(); renderMeta(); }
+  function api(path, method, body) {
+    return accessToken().then(function (tok) {
+      return fetch(API + path, {
+        method: method || "GET",
+        headers: { "Authorization": "Bearer " + tok, "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined
+      }).then(function (r) {
+        if (r.status === 401) {
+          return refresh().then(function (tok2) {
+            return fetch(API + path, {
+              method: method || "GET",
+              headers: { "Authorization": "Bearer " + tok2, "Content-Type": "application/json" },
+              body: body ? JSON.stringify(body) : undefined
+            });
+          });
         }
-      }).catch(function () { if (--pending === 0) renderList(); });
+        return r;
+      });
     });
   }
-  function play() {
-    if (!audio || !state.tracks.length) return;
-    var p = audio.play();
-    if (p && p.catch) p.catch(function () {});
+
+  /* ---------- one-time PKCE setup ---------- */
+  function startAuth() {
+    var bytes = new Uint8Array(64);
+    crypto.getRandomValues(bytes);
+    var verifier = Array.prototype.map.call(bytes, function (b) {
+      return ("0" + b.toString(16)).slice(-2);
+    }).join("");
+    try { sessionStorage.setItem(TK + ".verifier", verifier); } catch (e) {}
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)).then(function (hash) {
+      var challenge = btoa(String.fromCharCode.apply(null, new Uint8Array(hash)))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      var params = new URLSearchParams({
+        response_type: "code", client_id: opts.clientId, scope: SCOPES,
+        redirect_uri: redirectUri(), code_challenge_method: "S256",
+        code_challenge: challenge
+      });
+      location.href = "https://accounts.spotify.com/authorize?" + params.toString();
+    });
   }
-  function pause() { if (audio) audio.pause(); }
-  function next(auto) {
-    if (!state.tracks.length) return;
-    if (auto && state.repeat === "one") { audio.currentTime = 0; play(); return; }
-    var n = state.index;
-    if (state.shuffle) {
-      if (state.tracks.length > 1) {
-        do { n = Math.floor(Math.random() * state.tracks.length); }
-        while (n === state.index || state.missing[keyOf(state.tracks[n])]);
-      }
-    } else {
-      n = state.index + 1;
-      if (n >= state.tracks.length) {
-        if (auto && state.repeat === "off") { pause(); audio.currentTime = 0; return; }
-        n = 0;
-      }
-      while (state.tracks[n] && state.missing[keyOf(state.tracks[n])] && n !== state.index) {
-        n = (n + 1) % state.tracks.length;
-      }
-    }
-    loadTrack(n, true);
-  }
-  function prev() {
-    if (!state.tracks.length) return;
-    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
-    loadTrack(state.index - 1, state.playing);
+  function handleCallback() {
+    var q = new URLSearchParams(location.search);
+    var code = q.get("code");
+    if (!code) return Promise.resolve(false);
+    var verifier = "";
+    try { verifier = sessionStorage.getItem(TK + ".verifier") || ""; } catch (e) {}
+    history.replaceState({}, "", location.pathname);
+    return tokenPost({
+      grant_type: "authorization_code", code: code,
+      redirect_uri: redirectUri(), client_id: opts.clientId,
+      code_verifier: verifier
+    }).then(function (res) {
+      if (res.ok) storeAuth(res.j);
+      return res.ok;
+    }).catch(function () { return false; });
   }
 
+  /* ---------- playlist + playback state ---------- */
+  function loadPlaylist() {
+    return api("/playlists/" + opts.playlistId + "/tracks?limit=100&fields=items(track(uri,name,duration_ms,artists(name)))")
+      .then(function (r) { return r.ok ? r.json() : { items: [] }; })
+      .then(function (j) {
+        state.tracks = (j.items || []).map(function (it) {
+          var t = it.track || {};
+          return {
+            uri: t.uri, title: t.name || "Unknown",
+            artist: (t.artists || []).map(function (a) { return a.name; }).join(", "),
+            duration: Math.round((t.duration_ms || 0) / 1000)
+          };
+        }).filter(function (t) { return t.uri; });
+        renderList(); renderMeta();
+      }).catch(function () { status("Couldn't load the playlist. Check your connection."); });
+  }
+  function refreshPlayback() {
+    return api("/me/player").then(function (r) {
+      if (r.status === 204) { state.isPlaying = false; updatePlayBtn(); return null; }
+      return r.ok ? r.json() : null;
+    }).then(function (p) {
+      if (!p) return;
+      if (p.device) state.deviceId = p.device.id;
+      state.isPlaying = !!p.is_playing;
+      state.shuffle = !!p.shuffle_state;
+      state.repeat = p.repeat_state || "off";
+      if (p.item) {
+        state.currentUri = p.item.uri;
+        state.durationMs = p.item.duration_ms || 0;
+      }
+      state.progressMs = p.progress_ms || 0;
+      state.anchorAt = Date.now();
+      updatePlayBtn(); updateToggles(); renderMeta(); renderList();
+      drawProgress();
+    }).catch(function () {});
+  }
+  function chooseDevice() {
+    return api("/me/player/devices").then(function (r) { return r.ok ? r.json() : { devices: [] }; })
+      .then(function (j) {
+        var devs = j.devices || [];
+        var pick = devs.filter(function (d) { return d.is_active; })[0] ||
+          devs.filter(function (d) { return d.type === "Smartphone"; })[0] || devs[0];
+        state.deviceId = pick ? pick.id : null;
+        return state.deviceId;
+      }).catch(function () { return null; });
+  }
+  function ensureDevice() {
+    if (state.deviceId) return Promise.resolve(state.deviceId);
+    return chooseDevice();
+  }
+
+  function play(uri) {
+    ensureDevice().then(function (id) {
+      if (!id) {
+        status("No Spotify device found. Open the Spotify app on your phone once, then tap play again.");
+        return;
+      }
+      status("");
+      var body;
+      if (uri) body = { context_uri: "spotify:playlist:" + opts.playlistId, offset: { uri: uri } };
+      else if (state.currentUri && isPlaylistContext()) body = undefined; // resume
+      else body = { context_uri: "spotify:playlist:" + opts.playlistId };
+      api("/me/player/play?device_id=" + encodeURIComponent(id), "PUT", body).then(function (r) {
+        if (r.status === 404) { state.deviceId = null; status("Spotify device went away. Open the Spotify app, then tap play again."); }
+        setTimeout(refreshPlayback, 700);
+      });
+    });
+  }
+  function isPlaylistContext() {
+    // We only know the current item, not its context; resuming in place is
+    // right if the current track is in this playlist.
+    return state.tracks.some(function (t) { return t.uri === state.currentUri; });
+  }
+  function pausePlayback() {
+    api("/me/player/pause", "PUT").then(function () { setTimeout(refreshPlayback, 400); });
+  }
+
+  /* ---------- UI ---------- */
   var HTML =
     '<div class="amp-bar">' +
     '<button class="amp-btn amp-play" aria-label="Play or pause">▶</button>' +
@@ -260,179 +228,171 @@
     '<label class="amp-volwrap">Volume <input type="range" class="amp-vol" min="0" max="100" value="90" aria-label="Volume"></label>' +
     '<button class="amp-toggle amp-shuffle" aria-label="Shuffle">🔀 Shuffle</button>' +
     '<button class="amp-toggle amp-repeat" aria-label="Repeat">🔁 All</button>' +
-    '<button class="amp-toggle amp-add" aria-label="Add your own songs">＋ Add songs</button>' +
-    '<input type="file" class="amp-file" accept="audio/*,.mp3,.m4a,.ogg,.wav" multiple hidden>' +
     '</div>' +
+    '<div class="amp-status" style="display:none"></div>' +
+    '<div class="amp-setup" style="display:none"><p class="amp-setup-text">One-time setup: connect this app to your Spotify. You only do this once — after that it connects on its own, no button.</p>' +
+    '<button class="amp-setup-btn">Set up Spotify once</button></div>' +
     '<ol class="amp-list"></ol>' +
-    '<details class="amp-credits"><summary>Music credits &amp; licenses</summary><div class="amp-credits-body"></div></details>' +
+    '<p class="amp-note">Plays in your Spotify app.</p>' +
     '</div>';
 
-  function buildCredits() {
-    var box = $("amp-credits-body");
-    box.innerHTML = "";
+  function currentTrack() {
+    return state.tracks.filter(function (t) { return t.uri === state.currentUri; })[0] || null;
+  }
+  function renderMeta() {
+    var t = currentTrack();
+    if (state.setup) {
+      $("amp-title").textContent = "Spotify not set up yet";
+      $("amp-artist").textContent = "";
+      return;
+    }
+    $("amp-title").textContent = t ? t.title : (state.tracks.length ? "Your playlist" : "Loading…");
+    $("amp-artist").textContent = t ? t.artist : "";
+  }
+  function renderList() {
+    var ol = $("amp-list");
+    if (!ol) return;
+    ol.innerHTML = "";
     state.tracks.forEach(function (t) {
-      if (t.user) return;
-      var d = document.createElement("div");
-      d.className = "amp-credit";
-      var a = document.createElement("a");
-      a.href = t.source || "#"; a.target = "_blank"; a.rel = "noopener";
-      a.textContent = t.title + " — " + (t.artist || "Unknown");
-      d.appendChild(a);
-      var s = document.createElement("span");
-      s.textContent = " · " + (t.license || "") + (t.source ? " · Source" : "");
-      d.appendChild(s);
-      box.appendChild(d);
+      var li = document.createElement("li");
+      li.className = "amp-track" + (t.uri === state.currentUri ? " current" : "");
+      var name = document.createElement("span");
+      name.className = "amp-track-name";
+      name.textContent = t.title + (t.artist ? " — " + t.artist : "");
+      var dur = document.createElement("span");
+      dur.className = "amp-track-dur";
+      dur.textContent = t.duration ? fmt(t.duration) : "";
+      li.appendChild(name); li.appendChild(dur);
+      li.addEventListener("click", function () { play(t.uri); });
+      ol.appendChild(li);
     });
+  }
+  function updatePlayBtn() { $("amp-play").textContent = state.isPlaying ? "⏸" : "▶"; }
+  function updateToggles() {
+    $("amp-shuffle").classList.toggle("on", state.shuffle);
+    var b = $("amp-repeat");
+    b.textContent = state.repeat === "track" ? "🔂 One" : state.repeat === "off" ? "🔁 Off" : "🔁 All";
+    b.classList.toggle("on", state.repeat !== "off");
+  }
+  function progressNow() {
+    if (!state.isPlaying) return state.progressMs;
+    return Math.min(state.durationMs, state.progressMs + (Date.now() - state.anchorAt));
+  }
+  function drawProgress() {
+    if (state.seeking) return;
+    var d = state.durationMs / 1000;
+    var p = progressNow() / 1000;
+    $("amp-seek").value = d > 0 ? Math.round((p / d) * 1000) : 0;
+    $("amp-cur").textContent = fmt(p);
+    $("amp-dur").textContent = fmt(d);
+  }
+  function saveUi() {
+    try {
+      localStorage.setItem(opts.storageKey + ".ui",
+        JSON.stringify({ volume: state.volume, collapsed: state.collapsed }));
+    } catch (e) {}
+  }
+  function loadUi() {
+    try {
+      var p = JSON.parse(localStorage.getItem(opts.storageKey + ".ui") || "null");
+      if (p) {
+        state.volume = typeof p.volume === "number" ? p.volume : 90;
+        state.collapsed = !!p.collapsed;
+      }
+    } catch (e) {}
+  }
+  function showSetup(on) {
+    state.setup = on;
+    $("amp-setup").style.display = on ? "block" : "none";
+    $("amp-list").style.display = on ? "none" : "";
+    renderMeta();
   }
 
   function init(o) {
     opts = o || {};
+    TK = opts.storageKey + ".spotify";
     var mount = document.getElementById(opts.mount);
     if (!mount) return;
-    loadPrefs();
+    loadUi();
     els.root = document.createElement("div");
     els.root.className = "amp" + (state.collapsed ? " collapsed" : "");
     els.root.innerHTML = HTML;
     mount.appendChild(els.root);
-
-    audio = new Audio();
-    audio.preload = "metadata";
-    applyVolume();
-    $("amp-vol").value = Math.round(state.volume * 100);
-    $("amp-shuffle").classList.toggle("on", state.shuffle);
-    updateRepeatBtn();
+    $("amp-vol").value = state.volume;
     $("amp-collapse").textContent = state.collapsed ? "▸" : "▾";
+    updateToggles();
 
     $("amp-play").addEventListener("click", function () {
-      state.playing ? pause() : play();
+      if (state.setup) { startAuth(); return; }
+      state.isPlaying ? pausePlayback() : play();
     });
-    $("amp-next").addEventListener("click", function () { next(false); });
-    $("amp-prev").addEventListener("click", prev);
+    $("amp-next").addEventListener("click", function () {
+      api("/me/player/next", "POST").then(function () { setTimeout(refreshPlayback, 600); });
+    });
+    $("amp-prev").addEventListener("click", function () {
+      api("/me/player/previous", "POST").then(function () { setTimeout(refreshPlayback, 600); });
+    });
     $("amp-collapse").addEventListener("click", function () {
       state.collapsed = !state.collapsed;
       els.root.classList.toggle("collapsed", state.collapsed);
       $("amp-collapse").textContent = state.collapsed ? "▸" : "▾";
-      save();
+      saveUi();
     });
     $("amp-shuffle").addEventListener("click", function () {
-      state.shuffle = !state.shuffle;
-      $("amp-shuffle").classList.toggle("on", state.shuffle);
-      save();
+      state.shuffle = !state.shuffle; updateToggles();
+      api("/me/player/shuffle?state=" + state.shuffle, "PUT");
     });
     $("amp-repeat").addEventListener("click", function () {
-      state.repeat = state.repeat === "all" ? "one" : state.repeat === "one" ? "off" : "all";
-      updateRepeatBtn(); save();
+      state.repeat = state.repeat === "context" ? "track" : state.repeat === "track" ? "off" : "context";
+      updateToggles();
+      api("/me/player/repeat?state=" + state.repeat, "PUT");
     });
+    var volTimer = 0;
     $("amp-vol").addEventListener("input", function (e) {
-      state.volume = e.target.value / 100; applyVolume(); save();
+      state.volume = Number(e.target.value); saveUi();
+      if (state.volDead) return;
+      clearTimeout(volTimer);
+      volTimer = setTimeout(function () {
+        api("/me/player/volume?volume_percent=" + state.volume, "PUT").then(function (r) {
+          if (r && (r.status === 403 || r.status === 404)) {
+            state.volDead = true;
+            $("amp-vol").disabled = true;
+            $("amp-vol").title = "Volume is controlled in the Spotify app for this device";
+          }
+        }).catch(function () {});
+      }, 250);
     });
-    $("amp-add").addEventListener("click", function () { $("amp-file").click(); });
-    $("amp-file").addEventListener("change", function (e) {
-      importFiles(e.target.files); e.target.value = "";
-    });
-    if (navigator.storage && navigator.storage.persist) {
-      try { navigator.storage.persist(); } catch (e) {}
-    }
     var seek = $("amp-seek");
     seek.addEventListener("input", function () { state.seeking = true; });
     seek.addEventListener("change", function () {
-      if (isFinite(audio.duration) && audio.duration > 0) {
-        audio.currentTime = (seek.value / 1000) * audio.duration;
-      }
-      state.seeking = false; save();
-    });
-
-    audio.addEventListener("play", function () {
-      state.playing = true; state.started = true;
-      $("amp-play").textContent = "⏸";
-      if ("mediaSession" in navigator) { try { navigator.mediaSession.playbackState = "playing"; } catch (e) {} }
-    });
-    audio.addEventListener("pause", function () {
-      state.playing = false;
-      $("amp-play").textContent = "▶";
-      if ("mediaSession" in navigator) { try { navigator.mediaSession.playbackState = "paused"; } catch (e) {} }
-      save();
-    });
-    audio.addEventListener("timeupdate", function () {
-      if (!state.seeking && isFinite(audio.duration) && audio.duration > 0) {
-        $("amp-seek").value = Math.round((audio.currentTime / audio.duration) * 1000);
-        if ("mediaSession" in navigator && navigator.mediaSession.setPositionState) {
-          try {
-            navigator.mediaSession.setPositionState({
-              duration: audio.duration, position: audio.currentTime, playbackRate: audio.playbackRate
-            });
-          } catch (e) {}
-        }
-      }
-      $("amp-cur").textContent = fmt(audio.currentTime);
-      var now = Date.now();
-      if (now - state.saveTimer > 4000) { state.saveTimer = now; save(); }
-    });
-    audio.addEventListener("loadedmetadata", function () {
-      $("amp-dur").textContent = fmt(audio.duration);
-      if (!state.started && state.savedPosition > 0) {
-        try { audio.currentTime = Math.min(state.savedPosition, (audio.duration || 0) - 1); } catch (e) {}
-        state.savedPosition = 0;
+      state.seeking = false;
+      if (state.durationMs > 0) {
+        var ms = Math.round((seek.value / 1000) * state.durationMs);
+        state.progressMs = ms; state.anchorAt = Date.now();
+        api("/me/player/seek?position_ms=" + ms, "PUT").then(function () { setTimeout(refreshPlayback, 500); });
       }
     });
-    audio.addEventListener("ended", function () { next(true); });
-    audio.addEventListener("error", function () {
-      var t = state.tracks[state.index];
-      if (t) state.missing[keyOf(t)] = true;
-      renderList();
-      var remain = state.tracks.some(function (x) { return !state.missing[keyOf(x)]; });
-      if (remain && state.playing) next(false);
+    $("amp-setup-btn").addEventListener("click", startAuth);
+
+    loadTokens();
+    handleCallback().then(function () {
+      if (!state.tokens || !state.tokens.refresh) { showSetup(true); return; }
+      showSetup(false);
+      accessToken().then(function () {
+        loadPlaylist(); refreshPlayback(); chooseDevice();
+        state.pollTimer = setInterval(function () {
+          if (document.visibilityState === "visible") refreshPlayback();
+        }, 5000);
+        state.tickTimer = setInterval(drawProgress, 1000);
+      }).catch(function () { clearTokens(); showSetup(true); });
     });
-
-    if ("mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.setActionHandler("play", play);
-        navigator.mediaSession.setActionHandler("pause", pause);
-        navigator.mediaSession.setActionHandler("previoustrack", prev);
-        navigator.mediaSession.setActionHandler("nexttrack", function () { next(false); });
-        navigator.mediaSession.setActionHandler("seekto", function (d) {
-          if (typeof d.seekTime === "number") audio.currentTime = d.seekTime;
-        });
-      } catch (e) {}
-    }
-
-    fetch(base + "playlist.json", { cache: "no-cache" })
-      .then(function (r) { if (!r.ok) throw new Error("playlist"); return r.json(); })
-      .then(function (data) {
-        var builtin = (data.tracks || []).filter(function (t) { return t && t.file; });
-        return idbAll().then(function (blobs) {
-          state.blobs = blobs;
-          loadUserMeta();
-          state.userTracks.forEach(function (t) {
-            if (!blobs[t.blobId]) state.missing[keyOf(t)] = true;
-          });
-          state.tracks = builtin.concat(state.userTracks);
-          if (state.index >= state.tracks.length) state.index = 0;
-          if (state.tracks.length) { loadTrack(state.index, false); buildCredits(); }
-          else {
-            $("amp-title").textContent = "No music added yet";
-            $("amp-artist").textContent = "Tap ＋ Add songs to add your own MP3s.";
-          }
-        });
-      })
-      .catch(function () {
-        $("amp-title").textContent = "Music unavailable";
-        $("amp-artist").textContent = "playlist.json could not be loaded.";
-      });
-  }
-
-  function updateRepeatBtn() {
-    var b = $("amp-repeat");
-    if (!b) return;
-    b.textContent = state.repeat === "one" ? "🔂 One" : state.repeat === "off" ? "🔁 Off" : "🔁 All";
-    b.classList.toggle("on", state.repeat !== "off");
   }
 
   window.AppMusic = {
     init: init,
-    duck: function () { state.duckCount++; applyVolume(); },
-    unduck: function () { state.duckCount = Math.max(0, state.duckCount - 1); applyVolume(); },
-    pause: pause,
-    isPlaying: function () { return state.playing; }
+    duck: function () {},
+    unduck: function () {},
+    pause: function () { if (state.tokens) pausePlayback(); },
+    isPlaying: function () { return state.isPlaying; }
   };
 })();
