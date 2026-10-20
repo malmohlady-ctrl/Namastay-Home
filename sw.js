@@ -1,5 +1,5 @@
 /* Namastay Home service worker — cache-first offline support */
-const CACHE = "yoga-v13";
+const CACHE = "yoga-v14";
 const ASSETS = [
   "./",
   "index.html",
@@ -9,7 +9,6 @@ const ASSETS = [
   "icon-maskable-512.png",
   "player.js",
   "player.css",
-  "music/playlist.json",
   "voice/back-00-mid.mp3",
   "voice/back-00-name.mp3",
   "voice/back-01-mid.mp3",
