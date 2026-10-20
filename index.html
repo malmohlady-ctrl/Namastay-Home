@@ -170,7 +170,7 @@ const key="namastayhome.v1";
 let state={completed:[],selectedRoutine:"back"};
 try{const s=JSON.parse(localStorage.getItem(key)||"null");if(s)state={...state,...s};}catch(e){}
 const prefKey="namastayhome.prefs.v1";
-const DEFAULT_PLAYLIST="https://open.spotify.com/playlist/37i9dQZF1DWZvpVE2NxPV2";
+const DEFAULT_PLAYLIST="https://open.spotify.com/playlist/1jltX5L6gM6SKfYAuE2sLx";
 let prefs={rate:.92,spotify:DEFAULT_PLAYLIST};
 try{const sp=JSON.parse(localStorage.getItem(prefKey)||"null");if(sp)prefs={...prefs,...sp};}catch(e){}
 let segments=[],segIndex=0,remaining=0,total=0,elapsed=0,interval=null,running=false,paused=false,started=false,stepEnd=0,wakeLock=null;
