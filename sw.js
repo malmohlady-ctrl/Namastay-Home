@@ -1,5 +1,5 @@
 /* Namastay Home service worker — cache-first offline support */
-const CACHE = "yoga-v11";
+const CACHE = "yoga-v12";
 const ASSETS = [
   "./",
   "index.html",
@@ -7,6 +7,9 @@ const ASSETS = [
   "icon-192.png",
   "icon-512.png",
   "icon-maskable-512.png",
+  "player.js",
+  "player.css",
+  "music/playlist.json",
   "voice/back-00-mid.mp3",
   "voice/back-00-name.mp3",
   "voice/back-01-mid.mp3",
@@ -83,8 +86,48 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+/* Music MP3s: cache-first from CACHE, fetched in full on first play.
+   Range requests are served as 206 slices of the cached full file so
+   seeking and iOS Safari playback work; 206s are never cached. */
+async function serveMusic(request) {
+  const cache = await caches.open(CACHE);
+  let full = await cache.match(request.url);
+  if (!full) {
+    full = await fetch(request.url);
+    if (full && full.ok) cache.put(request.url, full.clone());
+  }
+  const range = request.headers.get("range");
+  if (!range || !full) return full;
+  const m = /^bytes=(\d+)-(\d*)$/.exec(range.trim());
+  if (!m) return full;
+  const blob = await full.blob();
+  const start = parseInt(m[1], 10);
+  const end = m[2] ? Math.min(parseInt(m[2], 10), blob.size - 1) : blob.size - 1;
+  if (start >= blob.size) {
+    return new Response(null, {
+      status: 416,
+      headers: { "Content-Range": "bytes */" + blob.size }
+    });
+  }
+  const slice = blob.slice(start, end + 1);
+  return new Response(slice, {
+    status: 206,
+    headers: {
+      "Content-Range": "bytes " + start + "-" + end + "/" + blob.size,
+      "Content-Length": String(slice.size),
+      "Accept-Ranges": "bytes",
+      "Content-Type": "audio/mpeg"
+    }
+  });
+}
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  if (url.pathname.includes("/music/") && url.pathname.endsWith(".mp3")) {
+    event.respondWith(serveMusic(event.request));
+    return;
+  }
   event.respondWith(
     caches.match(event.request, { ignoreSearch: true }).then((cached) => cached || fetch(event.request))
   );
