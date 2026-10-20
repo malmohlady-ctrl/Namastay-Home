@@ -132,3 +132,5 @@ self.addEventListener("fetch", (event) => {
     caches.match(event.request, { ignoreSearch: true }).then((cached) => cached || fetch(event.request))
   );
 });
+
+/* pages build refresh 2026-10-20 */
