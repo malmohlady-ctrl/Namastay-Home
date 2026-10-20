@@ -13,9 +13,66 @@
   var state = {
     tracks: [], index: 0, playing: false, shuffle: false,
     repeat: "all", volume: 0.9, duckCount: 0, missing: {},
-    seeking: false, saveTimer: 0, started: false
+    seeking: false, saveTimer: 0, started: false,
+    userTracks: [], blobs: {}, objUrl: null
   };
   var els = {}, audio = null, opts = {}, base = "music/";
+
+  /* User-imported files live in IndexedDB so they survive offline. */
+  function keyOf(t) { return t.blobId ? "blob:" + t.blobId : t.file; }
+  function idb() {
+    return new Promise(function (res, rej) {
+      var r = indexedDB.open("appmusic-files-v1", 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore("files"); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+  function idbAll() {
+    return idb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var out = {}, tx = db.transaction("files").objectStore("files").openCursor();
+        tx.onsuccess = function () {
+          var c = tx.result;
+          if (c) { out[c.key] = c.value; c.continue(); } else res(out);
+        };
+        tx.onerror = function () { rej(tx.error); };
+      });
+    }).catch(function () { return {}; });
+  }
+  function idbPut(id, blob) {
+    return idb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var tx = db.transaction("files", "readwrite");
+        tx.objectStore("files").put(blob, id);
+        tx.oncomplete = res; tx.onerror = function () { rej(tx.error); };
+      });
+    });
+  }
+  function idbDel(id) {
+    return idb().then(function (db) {
+      return new Promise(function (res) {
+        var tx = db.transaction("files", "readwrite");
+        tx.objectStore("files").delete(id);
+        tx.oncomplete = res; tx.onerror = res;
+      });
+    }).catch(function () {});
+  }
+  function saveUserMeta() {
+    try {
+      localStorage.setItem(opts.storageKey + ".usertracks",
+        JSON.stringify(state.userTracks.map(function (t) {
+          return { blobId: t.blobId, title: t.title, artist: t.artist, duration: t.duration };
+        })));
+    } catch (e) {}
+  }
+  function loadUserMeta() {
+    try {
+      state.userTracks = JSON.parse(localStorage.getItem(opts.storageKey + ".usertracks") || "[]")
+        .filter(function (t) { return t && t.blobId; })
+        .map(function (t) { t.user = true; return t; });
+    } catch (e) { state.userTracks = []; }
+  }
 
   function $(cls) { return els.root.querySelector("." + cls); }
   function fmt(s) {
@@ -58,16 +115,25 @@
     state.tracks.forEach(function (t, i) {
       var li = document.createElement("li");
       li.className = "amp-track" + (i === state.index ? " current" : "") +
-        (state.missing[t.file] ? " missing" : "");
+        (state.missing[keyOf(t)] ? " missing" : "");
       var name = document.createElement("span");
       name.className = "amp-track-name";
-      name.textContent = t.title + (state.missing[t.file] ? " (file missing)" : "");
+      name.textContent = t.title + (state.missing[keyOf(t)] ? " (file missing)" : "");
       var dur = document.createElement("span");
       dur.className = "amp-track-dur";
       dur.textContent = t.duration ? fmt(t.duration) : "";
-      li.appendChild(name); li.appendChild(dur);
+      li.appendChild(name);
+      if (t.user) {
+        var rm = document.createElement("button");
+        rm.className = "amp-remove"; rm.textContent = "✕"; rm.title = "Remove song";
+        rm.addEventListener("click", function (e) {
+          e.stopPropagation(); removeUserTrack(t.blobId);
+        });
+        li.appendChild(rm);
+      }
+      li.appendChild(dur);
       li.addEventListener("click", function () {
-        if (state.missing[t.file]) return;
+        if (state.missing[keyOf(t)]) return;
         loadTrack(i, true);
       });
       ol.appendChild(li);
@@ -90,10 +156,60 @@
     if (!state.tracks.length) return;
     state.index = (i + state.tracks.length) % state.tracks.length;
     var t = state.tracks[state.index];
-    audio.src = base + t.file;
+    if (state.objUrl) { URL.revokeObjectURL(state.objUrl); state.objUrl = null; }
+    if (t.blobId) {
+      var blob = state.blobs[t.blobId];
+      if (!blob) { state.missing[keyOf(t)] = true; renderMeta(); if (autoplay) next(false); return; }
+      state.objUrl = URL.createObjectURL(blob);
+      audio.src = state.objUrl;
+    } else {
+      audio.src = base + t.file;
+    }
     renderMeta();
     if (autoplay) play();
     save();
+  }
+  function removeUserTrack(blobId) {
+    var wasCurrent = state.tracks[state.index] && state.tracks[state.index].blobId === blobId;
+    delete state.blobs[blobId];
+    state.userTracks = state.userTracks.filter(function (t) { return t.blobId !== blobId; });
+    state.tracks = state.tracks.filter(function (t) { return t.blobId !== blobId; });
+    saveUserMeta(); idbDel(blobId);
+    if (state.index >= state.tracks.length) state.index = Math.max(0, state.tracks.length - 1);
+    if (wasCurrent) { pause(); if (state.tracks.length) loadTrack(state.index, false); }
+    renderList(); save();
+  }
+  function importFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return;
+    var pending = files.length;
+    files.forEach(function (f) {
+      if (!/audio|\.mp3$|\.m4a$|\.ogg$|\.wav$/i.test(f.type + " " + f.name)) { if (--pending === 0) renderList(); return; }
+      var id = "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      var clean = f.name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").trim();
+      var title = clean || "Untitled", artist = "Your music";
+      var parts = clean.split(" - ");
+      if (parts.length > 1) { artist = parts[0].trim(); title = parts.slice(1).join(" - ").trim(); }
+      idbPut(id, f).then(function () {
+        state.blobs[id] = f;
+        var meta = { blobId: id, title: title, artist: artist, duration: 0, user: true };
+        var probe = new Audio();
+        probe.preload = "metadata";
+        probe.onloadedmetadata = function () {
+          meta.duration = Math.round(probe.duration) || 0;
+          URL.revokeObjectURL(probe.src);
+          finish();
+        };
+        probe.onerror = finish;
+        probe.src = URL.createObjectURL(f);
+        function finish() {
+          state.userTracks.push(meta);
+          state.tracks.push(meta);
+          saveUserMeta();
+          if (--pending === 0) { renderList(); renderMeta(); }
+        }
+      }).catch(function () { if (--pending === 0) renderList(); });
+    });
   }
   function play() {
     if (!audio || !state.tracks.length) return;
@@ -108,7 +224,7 @@
     if (state.shuffle) {
       if (state.tracks.length > 1) {
         do { n = Math.floor(Math.random() * state.tracks.length); }
-        while (n === state.index || state.missing[state.tracks[n].file]);
+        while (n === state.index || state.missing[keyOf(state.tracks[n])]);
       }
     } else {
       n = state.index + 1;
@@ -116,7 +232,7 @@
         if (auto && state.repeat === "off") { pause(); audio.currentTime = 0; return; }
         n = 0;
       }
-      while (state.missing[state.tracks[n] && state.tracks[n].file] && n !== state.index) {
+      while (state.tracks[n] && state.missing[keyOf(state.tracks[n])] && n !== state.index) {
         n = (n + 1) % state.tracks.length;
       }
     }
@@ -144,6 +260,8 @@
     '<label class="amp-volwrap">Volume <input type="range" class="amp-vol" min="0" max="100" value="90" aria-label="Volume"></label>' +
     '<button class="amp-toggle amp-shuffle" aria-label="Shuffle">🔀 Shuffle</button>' +
     '<button class="amp-toggle amp-repeat" aria-label="Repeat">🔁 All</button>' +
+    '<button class="amp-toggle amp-add" aria-label="Add your own songs">＋ Add songs</button>' +
+    '<input type="file" class="amp-file" accept="audio/*,.mp3,.m4a,.ogg,.wav" multiple hidden>' +
     '</div>' +
     '<ol class="amp-list"></ol>' +
     '<details class="amp-credits"><summary>Music credits &amp; licenses</summary><div class="amp-credits-body"></div></details>' +
@@ -153,6 +271,7 @@
     var box = $("amp-credits-body");
     box.innerHTML = "";
     state.tracks.forEach(function (t) {
+      if (t.user) return;
       var d = document.createElement("div");
       d.className = "amp-credit";
       var a = document.createElement("a");
@@ -207,6 +326,13 @@
     $("amp-vol").addEventListener("input", function (e) {
       state.volume = e.target.value / 100; applyVolume(); save();
     });
+    $("amp-add").addEventListener("click", function () { $("amp-file").click(); });
+    $("amp-file").addEventListener("change", function (e) {
+      importFiles(e.target.files); e.target.value = "";
+    });
+    if (navigator.storage && navigator.storage.persist) {
+      try { navigator.storage.persist(); } catch (e) {}
+    }
     var seek = $("amp-seek");
     seek.addEventListener("input", function () { state.seeking = true; });
     seek.addEventListener("change", function () {
@@ -252,9 +378,9 @@
     audio.addEventListener("ended", function () { next(true); });
     audio.addEventListener("error", function () {
       var t = state.tracks[state.index];
-      if (t) state.missing[t.file] = true;
+      if (t) state.missing[keyOf(t)] = true;
       renderList();
-      var remain = state.tracks.some(function (x) { return !state.missing[x.file]; });
+      var remain = state.tracks.some(function (x) { return !state.missing[keyOf(x)]; });
       if (remain && state.playing) next(false);
     });
 
@@ -273,13 +399,21 @@
     fetch(base + "playlist.json", { cache: "no-cache" })
       .then(function (r) { if (!r.ok) throw new Error("playlist"); return r.json(); })
       .then(function (data) {
-        state.tracks = (data.tracks || []).filter(function (t) { return t && t.file; });
-        if (state.index >= state.tracks.length) state.index = 0;
-        if (state.tracks.length) { loadTrack(state.index, false); buildCredits(); }
-        else {
-          $("amp-title").textContent = "No music added yet";
-          $("amp-artist").textContent = "Add MP3 files to the music folder (see README).";
-        }
+        var builtin = (data.tracks || []).filter(function (t) { return t && t.file; });
+        return idbAll().then(function (blobs) {
+          state.blobs = blobs;
+          loadUserMeta();
+          state.userTracks.forEach(function (t) {
+            if (!blobs[t.blobId]) state.missing[keyOf(t)] = true;
+          });
+          state.tracks = builtin.concat(state.userTracks);
+          if (state.index >= state.tracks.length) state.index = 0;
+          if (state.tracks.length) { loadTrack(state.index, false); buildCredits(); }
+          else {
+            $("amp-title").textContent = "No music added yet";
+            $("amp-artist").textContent = "Tap ＋ Add songs to add your own MP3s.";
+          }
+        });
       })
       .catch(function () {
         $("amp-title").textContent = "Music unavailable";
