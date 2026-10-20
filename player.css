@@ -53,6 +53,12 @@
 .amp-track-dur { color: var(--muted, #9a9a9a); flex: none; font-size: 13px; }
 .amp-track.current { color: var(--primary, #5d8f6d); font-weight: 700; }
 .amp-track.missing { opacity: 0.45; cursor: default; text-decoration: line-through; }
+.amp-remove {
+  border: 1px solid var(--line, #333); background: transparent;
+  color: var(--muted, #9a9a9a); border-radius: 999px;
+  width: 26px; height: 26px; font-size: 12px; line-height: 1;
+  cursor: pointer; flex: none; align-self: center;
+}
 .amp-credits { margin-top: 10px; font-size: 13px; color: var(--muted, #9a9a9a); }
 .amp-credits summary { cursor: pointer; font-weight: 600; }
 .amp-credit { padding: 3px 0; }
