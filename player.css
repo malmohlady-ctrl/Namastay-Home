@@ -63,3 +63,11 @@
 .amp-credits summary { cursor: pointer; font-weight: 600; }
 .amp-credit { padding: 3px 0; }
 .amp-credit a { color: var(--accent, var(--primary, #5d8f6d)); }
+.amp-status { margin-top: 8px; font-size: 13px; color: var(--accent, #ffb37a); }
+.amp-setup { margin-top: 10px; }
+.amp-setup-text { font-size: 14px; color: var(--muted, #9a9a9a); margin: 0 0 8px; }
+.amp-setup-btn {
+  background: #1db954; color: #fff; border: none; border-radius: 999px;
+  padding: 12px 18px; font-weight: 800; font-size: 15px; cursor: pointer; width: 100%;
+}
+.amp-note { font-size: 12px; color: var(--muted, #9a9a9a); margin: 8px 0 0; }
