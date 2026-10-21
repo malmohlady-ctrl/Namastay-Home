@@ -1,17 +1,17 @@
 /* AppMusic player styles. Uses each app's theme variables when present. */
 .amp {
-  background: var(--card, #1c1c1e);
-  color: var(--ink, #f5f5f5);
-  border: 1px solid var(--line, #333);
+  background: var(--card, #141b2e);
+  color: var(--ink, #f5eeda);
+  border: 1px solid var(--line, #2c3a5e);
   border-radius: 16px;
   padding: 10px 12px;
   font: inherit;
 }
 .amp-bar { display: flex; align-items: center; gap: 8px; }
 .amp-btn {
-  border: 1px solid var(--line, #333);
-  background: var(--primary2, #2a2a2e);
-  color: var(--ink, #f5f5f5);
+  border: 1px solid var(--line, #2c3a5e);
+  background: var(--primary2, #1c2742);
+  color: var(--ink, #f5eeda);
   border-radius: 999px;
   width: 38px; height: 38px;
   font-size: 16px; line-height: 1;
@@ -19,55 +19,55 @@
   cursor: pointer; flex: none;
 }
 .amp-play {
-  background: var(--primary, #5d8f6d);
-  color: var(--on-primary, #10130f);
+  background: var(--primary, #d4a72c);
+  color: var(--on-primary, #10182b);
   width: 44px; height: 44px; font-size: 18px; border: none;
 }
 .amp-meta { flex: 1 1 auto; min-width: 0; }
 .amp-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.amp-artist { font-size: 13px; color: var(--muted, #9a9a9a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amp-artist { font-size: 13px; color: var(--muted, #a8b4d4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .amp-body { margin-top: 10px; }
 .amp.collapsed .amp-body { display: none; }
-.amp-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted, #9a9a9a); }
-.amp-progress input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--primary, #5d8f6d); }
+.amp-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted, #a8b4d4); }
+.amp-progress input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--primary, #d4a72c); }
 .amp-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
-.amp-volwrap { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted, #9a9a9a); flex: 1 1 auto; min-width: 140px; }
-.amp-volwrap input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--primary, #5d8f6d); }
+.amp-volwrap { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted, #a8b4d4); flex: 1 1 auto; min-width: 140px; }
+.amp-volwrap input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--primary, #d4a72c); }
 .amp-toggle {
-  border: 1px solid var(--line, #333);
+  border: 1px solid var(--line, #2c3a5e);
   background: transparent;
-  color: var(--muted, #9a9a9a);
+  color: var(--muted, #a8b4d4);
   border-radius: 999px;
   padding: 6px 12px; font-size: 13px; cursor: pointer;
 }
-.amp-toggle.on { color: var(--ink, #f5f5f5); border-color: var(--primary, #5d8f6d); background: var(--primary2, #2a2a2e); }
+.amp-toggle.on { color: var(--ink, #f5eeda); border-color: var(--primary, #d4a72c); background: var(--primary2, #1c2742); }
 .amp-list { list-style: none; margin: 10px 0 0; padding: 0; counter-reset: amp; }
 .amp-track {
   display: flex; justify-content: space-between; gap: 10px;
   padding: 8px 6px;
-  border-top: 1px solid var(--line, #333);
+  border-top: 1px solid var(--line, #2c3a5e);
   cursor: pointer; font-size: 14px;
 }
 .amp-track:first-child { border-top: none; }
 .amp-track-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.amp-track-dur { color: var(--muted, #9a9a9a); flex: none; font-size: 13px; }
-.amp-track.current { color: var(--primary, #5d8f6d); font-weight: 700; }
+.amp-track-dur { color: var(--muted, #a8b4d4); flex: none; font-size: 13px; }
+.amp-track.current { color: var(--primary, #d4a72c); font-weight: 700; }
 .amp-track.missing { opacity: 0.45; cursor: default; text-decoration: line-through; }
 .amp-remove {
-  border: 1px solid var(--line, #333); background: transparent;
-  color: var(--muted, #9a9a9a); border-radius: 999px;
+  border: 1px solid var(--line, #2c3a5e); background: transparent;
+  color: var(--muted, #a8b4d4); border-radius: 999px;
   width: 26px; height: 26px; font-size: 12px; line-height: 1;
   cursor: pointer; flex: none; align-self: center;
 }
-.amp-credits { margin-top: 10px; font-size: 13px; color: var(--muted, #9a9a9a); }
+.amp-credits { margin-top: 10px; font-size: 13px; color: var(--muted, #a8b4d4); }
 .amp-credits summary { cursor: pointer; font-weight: 600; }
 .amp-credit { padding: 3px 0; }
-.amp-credit a { color: var(--accent, var(--primary, #5d8f6d)); }
-.amp-status { margin-top: 8px; font-size: 13px; color: var(--accent, #ffb37a); }
+.amp-credit a { color: var(--accent, var(--primary, #d4a72c)); }
+.amp-status { margin-top: 8px; font-size: 13px; color: var(--accent, #f6d47a); }
 .amp-setup { margin-top: 10px; }
-.amp-setup-text { font-size: 14px; color: var(--muted, #9a9a9a); margin: 0 0 8px; }
+.amp-setup-text { font-size: 14px; color: var(--muted, #a8b4d4); margin: 0 0 8px; }
 .amp-setup-btn {
-  background: #1db954; color: #fff; border: none; border-radius: 999px;
+  background: #43c47c; color: #f5eeda; border: none; border-radius: 999px;
   padding: 12px 18px; font-weight: 800; font-size: 15px; cursor: pointer; width: 100%;
 }
-.amp-note { font-size: 12px; color: var(--muted, #9a9a9a); margin: 8px 0 0; }
+.amp-note { font-size: 12px; color: var(--muted, #a8b4d4); margin: 8px 0 0; }
