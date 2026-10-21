@@ -1,5 +1,5 @@
 /* Namastay Home service worker — cache-first offline support */
-const CACHE = "yoga-v14";
+const CACHE = "yoga-v15";
 const ASSETS = [
   "./",
   "index.html",
